@@ -1,4 +1,4 @@
-<img width="1315" height="708" alt="image" src="https://github.com/user-attachments/assets/8622f56a-0853-4372-aee6-37429940410e" /># 三检自动申报
+# 三检自动申报
 
 学校每日三检（晨检、午检、晚检）一键申报工具。
 
@@ -50,5 +50,6 @@
 - 只会申报三检，其他活动不管
 
 
-![Uploading IMG_20260601_230336.png…]()
+<img width="1350" height="852" alt="IMG_20260601_230336" src="https://github.com/user-attachments/assets/bee2fe1f-76ba-4e13-9229-647e36467fe9" />
+
 
