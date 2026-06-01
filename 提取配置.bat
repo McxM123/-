@@ -1,4 +1,3 @@
 @echo off
 cd /d "%~dp0"
-python sanjian.py
-pause
+python extract.py

@@ -1,4 +1,4 @@
-# 个人信息文件
+# 用户个人信息
 config.txt
 user_data.json
 cache.json
@@ -11,6 +11,24 @@ cache.json
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
 
-# 日志
-*.log
+# 虚拟环境
+venv/
+env/
+.venv/
+.env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
