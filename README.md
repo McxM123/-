@@ -1,4 +1,4 @@
-# 三检自动申报
+<img width="1315" height="708" alt="image" src="https://github.com/user-attachments/assets/8622f56a-0853-4372-aee6-37429940410e" /># 三检自动申报
 
 学校每日三检（晨检、午检、晚检）一键申报工具。
 
@@ -48,3 +48,7 @@
 - session-id 过期了要重新抓包提取
 - 换微信号也要重新提取
 - 只会申报三检，其他活动不管
+
+
+![Uploading IMG_20260601_230336.png…]()
+
