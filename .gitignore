@@ -1,0 +1,16 @@
+# 个人信息文件
+config.txt
+user_data.json
+cache.json
+
+# 抓包数据
+*.har
+*.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 日志
+*.log
