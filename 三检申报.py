@@ -3,6 +3,7 @@ import time
 import os
 import json
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE_URL = 'https://jl.zjlong.top'
 
@@ -134,6 +135,25 @@ class SanJianClient:
         resp = self.session.post(url, params=params, json=payload, headers=headers)
         return resp.json()
 
+    def check_event(self, eid, today):
+        """检查单个eventId是否是今天的三检"""
+        try:
+            detail = self.get_event_detail(eid)
+            if detail.get('returnCode') == 'SUCCESS':
+                event = detail.get('event', {})
+                title = event.get('title', '')
+                if today in title:
+                    return {
+                        'eventId': eid,
+                        'title': title,
+                        'is_sanjian': self.is_sanjian(title),
+                        'status': event.get('status', ''),
+                        'hash': event.get('hash')
+                    }
+        except:
+            pass
+        return None
+
     def discover_today_events(self, submitted):
         today = f'{datetime.now().month}月{datetime.now().day}日'
         
@@ -153,59 +173,39 @@ class SanJianClient:
             scan_start = min_eid - 5
             scan_end = max_eid + 5
         else:
-            # 没找到今天的记录，使用指数增长扫描+缓存优化
+            # 没找到今天的记录，使用多线程并发扫描
             max_submitted_eid = max(submitted.keys()) if submitted else 0
             cache = load_cache()
             last_eid = cache.get('last_event_id', max_submitted_eid)
             
-            # 从缓存位置开始，使用指数增长步长扫描
-            scan_start = last_eid
-            found_today = False
-            today_min_eid = None
-            today_max_eid = None
+            # 多线程并发扫描范围
+            scan_start = last_eid - 100
+            scan_end = last_eid + 1000
             
-            # 指数增长扫描：步长 100, 200, 400, 800...
-            step = 100
-            current_eid = last_eid
-            max_scan = last_eid + 5000  # 最大扫描范围
-            
-            while current_eid < max_scan:
-                try:
-                    detail = self.get_event_detail(current_eid)
-                    if detail.get('returnCode') == 'SUCCESS':
-                        event = detail.get('event', {})
-                        title = event.get('title', '')
-                        if today in title:
-                            if today_min_eid is None:
-                                today_min_eid = current_eid
-                            today_max_eid = current_eid
-                            found_today = True
-                            # 找到今天的活动后，继续扫描一小段确认范围
-                            for extra_eid in range(current_eid + 1, current_eid + 20):
-                                try:
-                                    extra_detail = self.get_event_detail(extra_eid)
-                                    if extra_detail.get('returnCode') == 'SUCCESS':
-                                        extra_event = extra_detail.get('event', {})
-                                        extra_title = extra_event.get('title', '')
-                                        if today in extra_title:
-                                            today_max_eid = extra_eid
-                                except:
-                                    break
-                            break
-                except:
-                    pass
+            # 使用线程池并发检查
+            found_events = []
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = {}
+                for eid in range(scan_start, scan_end + 1, 10):  # 每10个检查一次
+                    future = executor.submit(self.check_event, eid, today)
+                    futures[future] = eid
                 
-                current_eid += step
-                step = min(step * 2, 500)  # 步长指数增长，最大500
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result and result.get('is_sanjian'):
+                        found_events.append(result)
             
-            if found_today:
-                scan_start = today_min_eid - 10
-                scan_end = today_max_eid + 10
-                # 缓存今天找到的位置
-                save_cache({'last_event_id': today_min_eid, 'date': today})
+            if found_events:
+                # 找到三检活动，确定精确范围
+                min_found = min(e['eventId'] for e in found_events)
+                max_found = max(e['eventId'] for e in found_events)
+                scan_start = min_found - 5
+                scan_end = max_found + 5
+                save_cache({'last_event_id': min_found, 'date': today})
             else:
+                # 没找到，扩大范围再试
                 scan_start = max_submitted_eid - 50
-                scan_end = max_submitted_eid + 100
+                scan_end = max_submitted_eid + 2000
 
         today_events = []
 
