@@ -123,7 +123,6 @@ class SanJianClient:
     def discover_today_events(self, submitted):
         today = f'{datetime.now().month}月{datetime.now().day}日'
         
-        # 从已提交记录中找今天的三检，确定eventId范围
         today_submitted_eids = []
         for eid, record in submitted.items():
             event = record.get('event', {})
@@ -131,18 +130,14 @@ class SanJianClient:
             if today in title and self.is_sanjian(title):
                 today_submitted_eids.append(eid)
         
-        # 确定扫描范围
         if today_submitted_eids:
-            # 已找到今天的记录，只扫描小范围
             min_eid = min(today_submitted_eids)
             max_eid = max(today_submitted_eids)
             scan_start = min_eid - 5
             scan_end = max_eid + 5
         else:
-            # 没找到今天的记录，快速定位今天的活动
             max_submitted_eid = max(submitted.keys()) if submitted else 0
             
-            # 快速扫描：每50个eventId检测一次，找到今天的活动范围
             today_min_eid = None
             today_max_eid = None
             for test_eid in range(max_submitted_eid, max_submitted_eid + 2000, 50):
@@ -166,7 +161,6 @@ class SanJianClient:
                 found_today = False
             
             if not found_today:
-                # 快速扫描没找到，使用默认范围
                 scan_start = max_submitted_eid - 50
                 scan_end = max_submitted_eid + 100
 
@@ -216,7 +210,6 @@ class SanJianClient:
             field_id = field.get('id')
             field_type = field.get('type')
             title = field.get('title', '')
-            required = field.get('required', False)
 
             if field_type == 'input':
                 default = field.get('defaultValue', '')
@@ -311,18 +304,13 @@ class SanJianClient:
             print(f'\n[完成] 今日所有三检已申报，无需操作')
             return
 
-        # 加载用户数据
+        # 加载用户数据，没有则新建
         user_data = load_user_data()
         
         if user_data:
             print(f'\n[配置] 已加载保存的申报参数')
             print(f'[配置] 姓名: {user_data.get("bDGoK97", "未设置")}')
-            use_saved = input('是否使用已保存的参数？(y/n): ').strip().lower()
-            if use_saved != 'y':
-                user_data = None
-
-        # 如果没有用户数据，获取表单字段并让用户填写
-        if not user_data:
+        else:
             first_event = unsubmitted_today[0]
             print(f'\n[获取] 正在获取表单字段...')
             form_fields = self.get_form_fields(first_event['eventId'])
@@ -334,12 +322,6 @@ class SanJianClient:
             else:
                 print('[错误] 无法获取表单字段')
                 return
-
-        print(f'\n{"=" * 50}')
-        confirm = input('是否申报待申报的三检？(y/n): ').strip().lower()
-        if confirm != 'y':
-            print('[取消] 用户取消申报')
-            return
 
         print(f'\n[申报] 开始申报...')
         results = []
