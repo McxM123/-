@@ -1,6 +1,7 @@
 import requests
 import time
 import os
+import json
 from datetime import datetime
 
 BASE_URL = 'https://jl.zjlong.top'
@@ -21,21 +22,16 @@ DEFAULT_HEADERS = {
     'referer': 'https://servicewechat.com/wx15e6af63b62a4de4/939/page-frame.html',
 }
 
-DEFAULT_FORM_DATA = {
-    'bDGoK97': '江鹏城',
-    'V2MPn1Y': [{'text': '正常（小于或等于37.2度）'}],
-    'bxQkoV0': '36.5',
-    'RVPmxqR': [{'text': '无以上情况'}],
-    'ongyAln': [{'text': '否'}],
-}
+SANJIAN_KEYWORDS = ['晨检登记', '午检登记', '晚检登记']
 
-SANJIAN_KEYWORDS = ['晨检', '午检', '晚检']
+CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
+SESSION_FILE = os.path.join(CONFIG_DIR, 'config.txt')
+USER_DATA_FILE = os.path.join(CONFIG_DIR, 'user_data.json')
 
 
 def load_session_id():
-    config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.txt')
     try:
-        with open(config_file, 'r', encoding='utf-8') as f:
+        with open(SESSION_FILE, 'r', encoding='utf-8') as f:
             session_id = f.read().strip()
             if session_id:
                 return session_id
@@ -44,8 +40,21 @@ def load_session_id():
     return None
 
 
+def load_user_data():
+    try:
+        with open(USER_DATA_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def save_user_data(data):
+    with open(USER_DATA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
 class SanJianClient:
-    def __init__(self, session_id: str):
+    def __init__(self, session_id):
         self.session_id = session_id
         self.session = requests.Session()
         self.session.headers.update(DEFAULT_HEADERS)
@@ -92,12 +101,19 @@ class SanJianClient:
                 return cn
         return ''
 
-    def submit_roll(self, event_id, event_hash, child_name):
+    def get_form_fields(self, event_id):
+        detail = self.get_event_detail(event_id)
+        if detail.get('returnCode') == 'SUCCESS':
+            event = detail.get('event', {})
+            return event.get('extra', [])
+        return []
+
+    def submit_roll(self, event_id, event_hash, child_name, form_data):
         url = f'{BASE_URL}/roll/roll/v2'
         params = {'eventHash': event_hash, 'operator': 'USER'}
         payload = {
             'childName': child_name,
-            'extra': DEFAULT_FORM_DATA,
+            'extra': form_data,
             'eventId': event_id,
         }
         headers = {'dupreqtimestamp': self._ts()}
@@ -106,35 +122,57 @@ class SanJianClient:
 
     def discover_today_events(self, submitted):
         today = f'{datetime.now().month}月{datetime.now().day}日'
-
-        if not submitted:
-            return []
-
+        
+        # 从已提交记录中找今天的三检，确定eventId范围
         today_submitted_eids = []
         for eid, record in submitted.items():
             event = record.get('event', {})
             title = event.get('title', '')
             if today in title and self.is_sanjian(title):
                 today_submitted_eids.append(eid)
-
+        
+        # 确定扫描范围
         if today_submitted_eids:
+            # 已找到今天的记录，只扫描小范围
             min_eid = min(today_submitted_eids)
             max_eid = max(today_submitted_eids)
+            scan_start = min_eid - 5
+            scan_end = max_eid + 5
         else:
-            min_eid = max(submitted.keys())
-            max_eid = min_eid
-
-        scan_start = min_eid - 20
-        scan_end = max_eid + 20
+            # 没找到今天的记录，快速定位今天的活动
+            max_submitted_eid = max(submitted.keys()) if submitted else 0
+            
+            # 快速扫描：每50个eventId检测一次，找到今天的活动范围
+            today_min_eid = None
+            today_max_eid = None
+            for test_eid in range(max_submitted_eid, max_submitted_eid + 2000, 50):
+                try:
+                    detail = self.get_event_detail(test_eid)
+                    if detail.get('returnCode') == 'SUCCESS':
+                        event = detail.get('event', {})
+                        title = event.get('title', '')
+                        if today in title:
+                            if today_min_eid is None:
+                                today_min_eid = test_eid
+                            today_max_eid = test_eid
+                except:
+                    continue
+            
+            if today_min_eid is not None:
+                scan_start = today_min_eid - 50
+                scan_end = today_max_eid + 50
+                found_today = True
+            else:
+                found_today = False
+            
+            if not found_today:
+                # 快速扫描没找到，使用默认范围
+                scan_start = max_submitted_eid - 50
+                scan_end = max_submitted_eid + 100
 
         today_events = []
-        seen = set()
 
         for eid in range(scan_start, scan_end + 1):
-            if eid in seen:
-                continue
-            seen.add(eid)
-
             if eid in submitted:
                 record = submitted[eid]
                 event = record.get('event', {})
@@ -165,17 +203,74 @@ class SanJianClient:
             except:
                 continue
 
-            time.sleep(0.05)
-
         return today_events
+
+    def collect_user_input(self, form_fields):
+        print('\n' + '=' * 50)
+        print('请填写申报信息')
+        print('=' * 50)
+        print('(直接回车使用默认值，输入 * 跳过)\n')
+
+        user_data = {}
+        for field in form_fields:
+            field_id = field.get('id')
+            field_type = field.get('type')
+            title = field.get('title', '')
+            required = field.get('required', False)
+
+            if field_type == 'input':
+                default = field.get('defaultValue', '')
+                hint = f' [{default}]' if default else ''
+                value = input(f'{title}{hint}: ').strip()
+                if value == '*':
+                    continue
+                if not value and default:
+                    value = default
+                user_data[field_id] = value
+
+            elif field_type == 'selector':
+                options = field.get('options', [])
+                multi = field.get('multiSelection', False)
+                
+                print(f'{title}:')
+                for i, opt in enumerate(options):
+                    print(f'  {i+1}. {opt.get("text", "")}')
+                
+                if multi:
+                    choice = input('选择(可多选，用逗号分隔): ').strip()
+                    if choice == '*':
+                        continue
+                    selected = []
+                    for c in choice.split(','):
+                        try:
+                            idx = int(c.strip()) - 1
+                            if 0 <= idx < len(options):
+                                selected.append(options[idx])
+                        except:
+                            pass
+                    if selected:
+                        user_data[field_id] = selected
+                else:
+                    choice = input('选择(输入序号): ').strip()
+                    if choice == '*':
+                        continue
+                    try:
+                        idx = int(choice) - 1
+                        if 0 <= idx < len(options):
+                            user_data[field_id] = [options[idx]]
+                    except:
+                        pass
+            
+            print()
+
+        return user_data
 
     def run(self):
         print('=' * 50)
         print('三检申报程序')
         print('=' * 50)
 
-        print(f'\n[配置] 从 config.txt 读取 session-id')
-        print(f'[配置] session-id: {self.session_id[:20]}...')
+        print(f'\n[配置] session-id: {self.session_id[:20]}...')
 
         print('\n[查询] 获取学号...')
         child_name = self.get_child_name()
@@ -216,6 +311,30 @@ class SanJianClient:
             print(f'\n[完成] 今日所有三检已申报，无需操作')
             return
 
+        # 加载用户数据
+        user_data = load_user_data()
+        
+        if user_data:
+            print(f'\n[配置] 已加载保存的申报参数')
+            print(f'[配置] 姓名: {user_data.get("bDGoK97", "未设置")}')
+            use_saved = input('是否使用已保存的参数？(y/n): ').strip().lower()
+            if use_saved != 'y':
+                user_data = None
+
+        # 如果没有用户数据，获取表单字段并让用户填写
+        if not user_data:
+            first_event = unsubmitted_today[0]
+            print(f'\n[获取] 正在获取表单字段...')
+            form_fields = self.get_form_fields(first_event['eventId'])
+            
+            if form_fields:
+                user_data = self.collect_user_input(form_fields)
+                save_user_data(user_data)
+                print(f'\n[保存] 参数已保存到 user_data.json')
+            else:
+                print('[错误] 无法获取表单字段')
+                return
+
         print(f'\n{"=" * 50}')
         confirm = input('是否申报待申报的三检？(y/n): ').strip().lower()
         if confirm != 'y':
@@ -241,7 +360,7 @@ class SanJianClient:
                 results.append({'success': False})
                 continue
 
-            resp = self.submit_roll(eid, event_hash, child_name)
+            resp = self.submit_roll(eid, event_hash, child_name, user_data)
             if resp.get('returnCode') == 'SUCCESS':
                 roll_id = resp.get('rollId')
                 print(f'  [成功] rollId={roll_id}')
