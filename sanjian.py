@@ -203,12 +203,22 @@ class SanJianClient:
                     save_cache({'last_event_id': min_found, 'date': today})
                     print(f'\n  [找到] {len(sanjian_events)} 个三检活动\n')
                 else:
-                    scan_start = max_submitted_eid - 50
-                    scan_end = max_submitted_eid + 2000
                     print(f'\n  [提示] 仍未找到，最后尝试...\n')
+                    found3 = self._parallel_scan(max_submitted_eid, max_submitted_eid + 2000, today, '最后尝试扫描')
+                    sanjian_events = [e for e in found3 if e.get('is_sanjian')]
+                    if sanjian_events:
+                        min_found = min(e['eventId'] for e in sanjian_events)
+                        max_found = max(e['eventId'] for e in sanjian_events)
+                        scan_start = min_found - 5
+                        scan_end = max_found + 5
+                        save_cache({'last_event_id': min_found, 'date': today})
+                        print(f'\n  [找到] {len(sanjian_events)} 个三检活动\n')
+                    else:
+                        scan_start = max_submitted_eid - 50
+                        scan_end = max_submitted_eid + 100
             else:
                 scan_start = max_submitted_eid - 50
-                scan_end = max_submitted_eid + 2000
+                scan_end = max_submitted_eid + 100
                 print(f'\n  [提示] 未找到任何今天的活动\n')
 
         today_events = []
