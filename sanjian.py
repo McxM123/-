@@ -2,8 +2,10 @@ import requests
 import time
 import os
 import json
+import sys
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 BASE_URL = 'https://jl.zjlong.top'
 
@@ -135,20 +137,23 @@ class SanJianClient:
         resp = self.session.post(url, params=params, json=payload, headers=headers, timeout=10)
         return resp.json()
 
-    def check_event(self, eid, today):
+    def check_event(self, eid, today, shared):
         try:
             detail = self.get_event_detail(eid)
             if detail.get('returnCode') == 'SUCCESS':
                 event = detail.get('event', {})
                 title = event.get('title', '')
                 if today in title:
-                    return {
+                    info = {
                         'eventId': eid,
                         'title': title,
                         'is_sanjian': self.is_sanjian(title),
                         'status': event.get('status', ''),
                         'hash': event.get('hash')
                     }
+                    with shared['lock']:
+                        shared['results'].append(info)
+                    return info
         except:
             pass
         return None
@@ -173,33 +178,41 @@ class SanJianClient:
             cache = load_cache()
             last_eid = cache.get('last_event_id', max_submitted_eid)
             
-            scan_start = last_eid - 100
-            scan_end = last_eid + 1000
+            found = self._parallel_scan(last_eid - 100, last_eid + 1000, today, '10线程并发扫描')
             
-            found_events = []
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                futures = {}
-                for eid in range(scan_start, scan_end + 1, 10):
-                    future = executor.submit(self.check_event, eid, today)
-                    futures[future] = eid
-                
-                for future in as_completed(futures):
-                    result = future.result()
-                    if result and result.get('is_sanjian'):
-                        found_events.append(result)
-            
-            if found_events:
-                min_found = min(e['eventId'] for e in found_events)
-                max_found = max(e['eventId'] for e in found_events)
+            sanjian_events = [e for e in found if e.get('is_sanjian')]
+            if sanjian_events:
+                min_found = min(e['eventId'] for e in sanjian_events)
+                max_found = max(e['eventId'] for e in sanjian_events)
                 scan_start = min_found - 5
                 scan_end = max_found + 5
                 save_cache({'last_event_id': min_found, 'date': today})
+                print(f'\n  [找到] {len(sanjian_events)} 个三检活动\n')
+            elif found:
+                max_found = max(e['eventId'] for e in found)
+                scan_start = max_found
+                scan_end = max_found + 1500
+                print(f'\n  [提示] 未找到三检，扩大范围...\n')
+                found2 = self._parallel_scan(scan_start, scan_end, today, '扩大范围扫描')
+                sanjian_events = [e for e in found2 if e.get('is_sanjian')]
+                if sanjian_events:
+                    min_found = min(e['eventId'] for e in sanjian_events)
+                    max_found = max(e['eventId'] for e in sanjian_events)
+                    scan_start = min_found - 5
+                    scan_end = max_found + 5
+                    save_cache({'last_event_id': min_found, 'date': today})
+                    print(f'\n  [找到] {len(sanjian_events)} 个三检活动\n')
+                else:
+                    scan_start = max_submitted_eid - 50
+                    scan_end = max_submitted_eid + 2000
+                    print(f'\n  [提示] 仍未找到，最后尝试...\n')
             else:
                 scan_start = max_submitted_eid - 50
                 scan_end = max_submitted_eid + 2000
+                print(f'\n  [提示] 未找到任何今天的活动\n')
 
         today_events = []
-
+        
         for eid in range(scan_start, scan_end + 1):
             if eid in submitted:
                 record = submitted[eid]
@@ -232,6 +245,42 @@ class SanJianClient:
                 continue
 
         return today_events
+
+    def _parallel_scan(self, scan_start, scan_end, today, label):
+        total_steps = (scan_end - scan_start) // 10 + 1
+        shared = {'results': [], 'lock': threading.Lock(), 'done_count': 0}
+        
+        print(f'\n  [⚡ {label}] {scan_start} ~ {scan_end}\n')
+        
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {}
+            for eid in range(scan_start, scan_end + 1, 10):
+                future = executor.submit(self.check_event, eid, today, shared)
+                futures[future] = eid
+            
+            for future in as_completed(futures):
+                result = future.result()
+                with shared['lock']:
+                    shared['done_count'] += 1
+                    done = shared['done_count']
+                
+                progress = int(done / total_steps * 100)
+                bar = '█' * (progress // 4) + '░' * (25 - progress // 4)
+                
+                with shared['lock']:
+                    latest = shared['results'][-1:] if shared['results'] else []
+                
+                line = f'  [{bar}] {progress}% 进度:{done}/{total_steps} 线程:10'
+                if latest:
+                    e = latest[0]
+                    tag = '★三检' if e['is_sanjian'] else '·其他'
+                    line += f'  |  最新: [{e["eventId"]}] {tag} {e["title"][:25]}'
+                
+                sys.stdout.write('\r' + line + ' ' * 20)
+                sys.stdout.flush()
+        
+        print()
+        return shared['results']
 
     def collect_user_input(self, form_fields):
         print('\n' + '=' * 50)
