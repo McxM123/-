@@ -176,25 +176,18 @@ class SanJianClient:
         else:
             max_submitted_eid = max(submitted.keys()) if submitted else 0
             cache = load_cache()
-            last_eid = cache.get('last_event_id', max_submitted_eid)
+            base_eid = cache.get('last_event_id', max_submitted_eid)
             
-            found = self._parallel_scan(last_eid - 100, last_eid + 1000, today, '10线程并发扫描')
+            scan_ranges = [
+                (base_eid - 200, base_eid + 3000, '第一轮扫描(+/-3200)'),
+                (base_eid + 3000, base_eid + 10000, '第二轮扫描(+7000)'),
+                (base_eid + 10000, base_eid + 20000, '第三轮扫描(+10000)'),
+            ]
             
-            sanjian_events = [e for e in found if e.get('is_sanjian')]
-            if sanjian_events:
-                min_found = min(e['eventId'] for e in sanjian_events)
-                max_found = max(e['eventId'] for e in sanjian_events)
-                scan_start = min_found - 5
-                scan_end = max_found + 5
-                save_cache({'last_event_id': min_found, 'date': today})
-                print(f'\n  [找到] {len(sanjian_events)} 个三检活动\n')
-            elif found:
-                max_found = max(e['eventId'] for e in found)
-                scan_start = max_found
-                scan_end = max_found + 1500
-                print(f'\n  [提示] 未找到三检，扩大范围...\n')
-                found2 = self._parallel_scan(scan_start, scan_end, today, '扩大范围扫描')
-                sanjian_events = [e for e in found2 if e.get('is_sanjian')]
+            sanjian_events = []
+            for scan_start, scan_end, label in scan_ranges:
+                found = self._parallel_scan(scan_start, scan_end, today, label)
+                sanjian_events = [e for e in found if e.get('is_sanjian')]
                 if sanjian_events:
                     min_found = min(e['eventId'] for e in sanjian_events)
                     max_found = max(e['eventId'] for e in sanjian_events)
@@ -202,24 +195,12 @@ class SanJianClient:
                     scan_end = max_found + 5
                     save_cache({'last_event_id': min_found, 'date': today})
                     print(f'\n  [找到] {len(sanjian_events)} 个三检活动\n')
-                else:
-                    print(f'\n  [提示] 仍未找到，最后尝试...\n')
-                    found3 = self._parallel_scan(max_submitted_eid, max_submitted_eid + 2000, today, '最后尝试扫描')
-                    sanjian_events = [e for e in found3 if e.get('is_sanjian')]
-                    if sanjian_events:
-                        min_found = min(e['eventId'] for e in sanjian_events)
-                        max_found = max(e['eventId'] for e in sanjian_events)
-                        scan_start = min_found - 5
-                        scan_end = max_found + 5
-                        save_cache({'last_event_id': min_found, 'date': today})
-                        print(f'\n  [找到] {len(sanjian_events)} 个三检活动\n')
-                    else:
-                        scan_start = max_submitted_eid - 50
-                        scan_end = max_submitted_eid + 100
-            else:
+                    break
+            
+            if not sanjian_events:
                 scan_start = max_submitted_eid - 50
-                scan_end = max_submitted_eid + 100
-                print(f'\n  [提示] 未找到任何今天的活动\n')
+                scan_end = max_submitted_eid + 200
+                print(f'\n  [提示] 未找到三检，可能是今天还没有发布\n')
 
         today_events = []
         
