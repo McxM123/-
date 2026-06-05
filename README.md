@@ -46,3 +46,8 @@
 - session-id 过期了要重新抓包提取
 - 换微信号也要重新提取
 - 只会申报三检（晨检/午检/晚检），其他活动不管
+- 
+##运行效果
+  
+- <img width="1186" height="769" alt="image" src="https://github.com/user-attachments/assets/c8cdd82c-8e7f-4959-9993-acb08c7551ec" />
+
