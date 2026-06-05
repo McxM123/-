@@ -2,6 +2,7 @@
 config.txt
 user_data.json
 cache.json
+patterns.json
 
 # 抓包数据
 *.har
